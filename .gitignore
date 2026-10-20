@@ -1,0 +1,17 @@
+# Raw data (MIND license, 247 MB)
+data/
+
+# Trained models and processed data
+artifacts/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
