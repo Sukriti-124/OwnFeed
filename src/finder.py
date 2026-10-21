@@ -1,7 +1,14 @@
-"""Finders: pick candidate articles for a user. Starts with the popularity ("trending") baseline."""
+"""Finders: pick candidate articles for a user. The popularity ("trending") baseline and the two-tower model."""
+from pathlib import Path
+
+import numpy as np
 import pandas as pd
 
 from src.data import explode_impressions
+
+ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "artifacts"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDINGS_PATH = ARTIFACTS_DIR / "news_embeddings.npz"
 
 
 def hourly_clicks(behaviors: pd.DataFrame) -> pd.DataFrame:
@@ -31,3 +38,31 @@ def with_bucket_quotas(ranked: list, bucket_of: dict, per_bucket: int = 100) -> 
             taken[bucket] = taken.get(bucket, 0) + 1
             kept.append(news_id)
     return kept
+
+
+# --- Two-tower: article text -> numbers ---
+
+def article_text(news: pd.DataFrame) -> pd.Series:
+    """The text MiniLM reads for each article: category, subcategory, title and abstract."""
+    return news["category"] + " / " + news["subcategory"] + ". " + news["title"] + ". " + news["abstract"]
+
+
+def embed_articles(news: pd.DataFrame, batch_size: int = 256) -> np.ndarray:
+    """One 384-number vector per article from frozen MiniLM, scaled to length 1 so dot product = similarity."""
+    from sentence_transformers import SentenceTransformer  # imported here so the trending baseline doesn't load torch
+
+    model = SentenceTransformer(EMBEDDING_MODEL)
+    return model.encode(
+        article_text(news).tolist(), batch_size=batch_size, normalize_embeddings=True, show_progress_bar=True
+    )
+
+
+def save_embeddings(news_ids, vectors: np.ndarray, path: Path = EMBEDDINGS_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(path, news_ids=np.asarray(news_ids, dtype=str), vectors=vectors)
+
+
+def load_embeddings(path: Path = EMBEDDINGS_PATH) -> tuple[np.ndarray, np.ndarray]:
+    """(news_ids, vectors) in matching order."""
+    saved = np.load(path)
+    return saved["news_ids"], saved["vectors"]
