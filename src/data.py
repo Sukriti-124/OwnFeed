@@ -5,9 +5,9 @@ import pandas as pd
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 TRAIN_DIR = DATA_DIR / "MINDsmall_train"
-TEST_DIR = DATA_DIR / "MINDsmall_test"  # locked test set: only for final results
+TEST_DIR = DATA_DIR / "MINDsmall_test"  # locked test set:
 
-# Last day of the train folder is held out for validation (split by time to avoid peeking at the future)
+# Last day of the train folder is held out for validation
 VALIDATION_DAY = "2019-11-14"
 
 BUCKETS = ["News", "Learn", "Lifestyle", "Entertain", "Sports"]

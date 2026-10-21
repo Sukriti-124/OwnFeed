@@ -1,0 +1,4 @@
+,recall@10,recall@50,recall@100,recall@500,ndcg@10
+random,0.002,0.008,0.016,0.081,
+trending,0.095,0.35,0.485,0.786,0.048
+trending + quotas,0.095,0.35,0.485,0.777,0.048
