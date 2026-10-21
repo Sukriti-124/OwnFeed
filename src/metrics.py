@@ -1,4 +1,4 @@
-"""Ranking metrics: how well a ranked list of articles covers what the user actually clicked."""
+"""Metrics: how well a ranked list covers what the user clicked, and how well a page matches the slider mix."""
 import numpy as np
 import pandas as pd
 
@@ -25,3 +25,18 @@ def evaluate(rankings: list[list], clicked_lists: list[list], ks=(10, 50, 100, 5
         row[f"ndcg@{ndcg_k}"] = ndcg_at_k(ranked, clicked, ndcg_k)
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def mix_error(page_buckets: np.ndarray, targets: np.ndarray) -> np.ndarray:
+    """Per page: half the summed gap between the page's bucket shares and the target (0 = perfect, 1 = completely off).
+
+    page_buckets: (pages, page_size) bucket index of each article; targets: (pages, buckets) shares summing to 1.
+    """
+    n_buckets = targets.shape[1]
+    shares = np.stack([(page_buckets == b).mean(1) for b in range(n_buckets)], axis=1)
+    return 0.5 * np.abs(shares - targets).sum(1)
+
+
+def relevance_kept(chosen_relevance: np.ndarray, top_relevance: np.ndarray) -> np.ndarray:
+    """Per page: total relevance of the chosen articles as a share of the plain top-k's (1 = nothing lost)."""
+    return chosen_relevance.sum(1) / top_relevance.sum(1)

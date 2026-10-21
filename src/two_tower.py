@@ -125,7 +125,7 @@ def train(
     return losses
 
 
-def top_k_with_quotas(scores: torch.Tensor, item_buckets: np.ndarray, buckets: list, per_bucket: int = 100):
+def top_k_with_quotas(scores: torch.Tensor, item_buckets: np.ndarray, buckets: list, per_bucket: int = 100, return_scores: bool = False):
     """For each user (row), the top per_bucket items of every bucket, merged and sorted by score. Returns item columns."""
     picked_idx, picked_scores = [], []
     for bucket in buckets:
@@ -135,4 +135,28 @@ def top_k_with_quotas(scores: torch.Tensor, item_buckets: np.ndarray, buckets: l
         picked_scores.append(s)
     idx, s = torch.cat(picked_idx, 1), torch.cat(picked_scores, 1)
     order = s.argsort(dim=1, descending=True)
+    if return_scores:
+        return idx.gather(1, order), s.gather(1, order)
     return idx.gather(1, order)
+
+
+def find_candidates(
+    model: TwoTower, user_rows: torch.Tensor, hour_rows: torch.Tensor, history: torch.Tensor,
+    article_vectors: torch.Tensor, popularity: torch.Tensor, pool_idx: torch.Tensor, pool_buckets: np.ndarray,
+    buckets: list, beta: float = 0.05, per_bucket: int = 100, chunk: int = 4096,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """The final finder for many page views at once: similarity + beta x trending, top per_bucket per bucket.
+
+    Returns (pool columns, scores), each of shape (page views, per_bucket x buckets), best first.
+    """
+    with torch.no_grad():
+        users = user_vectors(model, history[user_rows], article_vectors)
+        items = model.items(article_vectors[pool_idx])
+        cols, scores = [], []
+        for start in range(0, len(user_rows), chunk):
+            rows = slice(start, start + chunk)
+            s = users[rows] @ items.T + beta * popularity[hour_rows[rows]][:, pool_idx]
+            c, sc = top_k_with_quotas(s, pool_buckets, buckets, per_bucket, return_scores=True)
+            cols.append(c)
+            scores.append(sc)
+    return torch.cat(cols), torch.cat(scores)
