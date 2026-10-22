@@ -13,7 +13,9 @@ import pandas as pd
 import streamlit as st
 
 from src.data import BUCKETS
-from src.feed import DEMO_ASSETS, PERSONAS, FeedEngine, FeedSession, build_demo_assets
+from src.feed import ALL_EMBEDDINGS, DEMO_ASSETS, PERSONAS, FeedEngine, FeedSession, build_demo_assets
+from src.prepare import missing_data
+from src.two_tower import MODEL_PATH
 
 # Warm editorial palette: cream paper, ink text, earthy topic colors
 INK, MUTED, RULE, PAPER, ACCENT = "#1E1B16", "#6B6255", "#E5DCCB", "#FFFDF8", "#C2410C"
@@ -58,6 +60,15 @@ def load_engine() -> FeedEngine:
         build_demo_assets()
     return FeedEngine()
 
+
+if missing := missing_data():
+    st.error("**OwnFeed needs the MIND-small dataset, which isn't included in this repo** (its license doesn't allow "
+             "redistribution). See **README → Run locally**. Missing:\n\n" + "\n".join(f"- `{m}`" for m in missing))
+    st.stop()
+if not all(p.exists() for p in (MODEL_PATH, ALL_EMBEDDINGS)):
+    st.error("The model files haven't been built yet. From the repo root, run:\n\n```\npython -m src.prepare\n```\n\n"
+             "then refresh this page.")
+    st.stop()
 
 engine = load_engine()
 
