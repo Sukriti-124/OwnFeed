@@ -57,6 +57,15 @@ class ClickModel:
     def probability(self, features: torch.Tensor) -> torch.Tensor:
         return torch.sigmoid(features @ self.weights.to(features.device) + self.bias.to(features.device))
 
+    def state(self) -> dict:
+        return {"weights": self.weights.cpu(), "bias": self.bias.cpu()}
+
+    @classmethod
+    def from_state(cls, state: dict) -> "ClickModel":
+        model = cls()
+        model.weights, model.bias = state["weights"], state["bias"]
+        return model
+
 
 def auc(probabilities: np.ndarray, clicked: np.ndarray) -> float:
     """Chance that a random clicked article gets a higher probability than a random skipped one (0.5 = guessing)."""
