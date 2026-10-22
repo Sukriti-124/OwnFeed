@@ -1,0 +1,7 @@
+,gap_after_30_pages,gap_after_30_pages,favorite_topic_share_of_reading_%,favorite_topic_share_of_reading_%,click_rate_%,click_rate_%
+,mean,std,mean,std,mean,std
+feed,,,,,,
+Normal feed,0.304,0.004,40.998,0.432,3.68,0.043
+Fixed quotas,0.221,0.003,34.12,0.302,3.448,0.035
+PID only,0.153,0.002,26.448,0.201,2.941,0.02
+OwnFeed,0.125,0.001,24.818,0.154,2.886,0.021

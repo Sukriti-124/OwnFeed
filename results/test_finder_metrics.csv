@@ -1,0 +1,4 @@
+,recall@10,recall@50,recall@100,recall@500,ndcg@10
+random,0.002,0.009,0.019,0.093,
+trending,0.253,0.483,0.615,0.838,0.152
+two-tower + trending (0.05),0.245,0.517,0.644,0.859,0.15
