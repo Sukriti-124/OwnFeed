@@ -2,7 +2,7 @@
 
 **Your feed, your rules.** A news recommender where you set the topic mix with sliders, and the feed sticks to it, instead of drifting toward whatever you click most.
 
-![OwnFeed demo: the same reader's normal feed vs. OwnFeed, side by side](results/figures/demo.gif)
+![OwnFeed demo: Same reader's normal feed vs. OwnFeed, side by side](results/figures/demo.gif)
 
 *Same reader, same articles. The normal feed gives a news lover ~80% News no matter what. OwnFeed follows the sliders. When the mix changes, OwnFeed follows; the normal feed doesn't.*
 
@@ -12,7 +12,7 @@
 
 Engagement-optimized feeds show you more of what you already click. That works for clicks, but it means **you don't get to decide what your feed is made of**. Someone who reads a lot of news gets an ever-newsier feed, even if they'd *like* more science, food or sport.
 
-OwnFeed asks: **can a recommender follow a mix the user chooses, and what does that cost?**
+OwnFeed asks: **Can a recommender follow a mix the user chooses, and what does that cost?**
 
 ## How it works
 
@@ -92,6 +92,8 @@ Building one page (finder + arranger + balancer) takes **~1 ms** on a laptop CPU
 - **Honest simulation.** Simulated readers have a *fixed* true taste. Only the feed's picture of them changes as they click, so the simulation doesn't build in drift. The feed's own head-start model is fitted on different days from the simulator's "truth", so it never sees the answers.
 - **What didn't work.** Training the two towers with the trending signal inside the loss was mixed (better top 10, worse Recall@500), so we kept the simpler setup: train on taste, add trending at scoring time. The towers also learn little beyond raw MiniLM similarity. Both experiments are documented in notebooks 05 and 07.
 
+For every decision, the alternatives we considered and a reference for every function, see the **[technical report](docs/REPORT.md)**.
+
 ## Limitations
 
 - **Simulated readers, not real people.** The balancer results come from a click model fitted on real clicks, not a live A/B test.
@@ -99,6 +101,26 @@ Building one page (finder + arranger + balancer) takes **~1 ms** on a laptop CPU
 - **Balanced targets only** in the balancer study; other slider settings were tested for the arranger.
 - **The balancer can feel counter-intuitive.** To make a news lover *read* 20% News, it may *show* only ~5–10% News. A product would cap that (see future work).
 - **MIND is news, not social posts.** It stands in for a social feed.
+
+## Beyond news: where this applies
+
+The idea isn't specific to news: **let people choose the *mix* of what they get, build each page to match it, and correct for what they actually consume.** Any product that ranks a stream of items of different kinds can reuse the same three stages.
+
+| Product | What the sliders could be | What changes from OwnFeed |
+|---|---|---|
+| **News apps** (Google News, Apple News) | Topics; local vs. world; politics vs. science | Almost nothing. Add a "breaking news" exception so major stories get through a low News slider |
+| **Instagram, TikTok, YouTube** | Friends vs. recommended; topics; calm vs. high-energy | Image/video embeddings instead of text; **watch time** instead of clicks |
+| **Bluesky** | Same as OwnFeed | Custom feeds are open to anyone: the most realistic way to put OwnFeed in front of real users |
+| **Spotify, Apple Music** | Genres; familiar vs. new; mood (focus / chill) | The "page" is a queue; **skips and listen-through** replace clicks |
+| **Podcasts, audiobooks** | Learning vs. entertainment; episode length | The balancer works over **listening hours per week**, not per page |
+| **Netflix, long video** | Genres; "finish what I started" vs. something new | The arranger fills rows on a home screen |
+| **Online learning** | Subjects; review vs. new material | The balancer tracks learning goals ("you've skipped science all week") |
+| **E-commerce** | Categories; budget vs. premium; sustainable share | The cost of following the sliders shows up as revenue, not clicks |
+| **Parental controls** | Learning / creative / entertainment | Keeps what a child actually *watches* near the chosen mix |
+
+**What carries over as is:** the finder → arranger → balancer design, per-category candidate quotas, the strictness rule, head start + PID, and the offline evaluation (time split, locked test set, simulator fitted on real logs). **What changes per product:** item embeddings, the "consumed" signal, session length and ordering rules.
+
+**Why it matters now:** the EU's Digital Services Act already requires very large platforms to explain their recommender systems and offer an option not based on profiling. OwnFeed puts a number on what user control costs (~10% relevance and ~20% clicks in a session), which a company can weigh against long-term trust. More detail is in the [technical report](docs/REPORT.md#8-beyond-news-where-this-applies).
 
 ## Run locally
 
@@ -120,7 +142,6 @@ data/MINDsmall_train/   news.tsv  behaviors.tsv  …   (from MINDsmall_train.zip
 data/MINDsmall_test/    news.tsv  behaviors.tsv  …   (from MINDsmall_dev.zip, used as the locked test set)
 ```
 
-> As of October 2026 the download links on the MIND site return an access error. If they're still down, check the site for updates.
 
 **3. Build the model files** (~2–3 minutes; downloads MiniLM on first run)
 
