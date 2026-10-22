@@ -3,3 +3,4 @@ matplotlib
 ipykernel
 torch
 sentence-transformers
+streamlit
