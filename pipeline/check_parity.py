@@ -3,9 +3,12 @@
     python -m pipeline.check_parity
 
 Compares: page-view and row counts per split, every article's bucket, trending scores at sample hours,
-and users' last-50 click histories.
+users' last-50 click histories, and src/data.py's loaders (warehouse vs raw files, strictly).
 """
+import os
 import sys
+
+os.environ["OWNFEED_DATA"] = "raw"  # the "old way" side must read the raw files, not the warehouse
 
 import duckdb
 import numpy as np
@@ -74,6 +77,20 @@ def main() -> None:
     wh_h = con.execute("SELECT user_id, recent_clicks FROM marts.dim_user_history WHERE source = 'train'").df().set_index("user_id")["recent_clicks"]
     same = all(list(wh_h[u]) == h.split()[-HISTORY_LEN:] for u, h in zip(sample.user_id, sample.history))
     check("last-50 click history (2,000 users)", same)
+
+    # 6. src/data.py loaders: warehouse path vs raw path (values, order and dtypes)
+    loaders_ok = True
+    for folder in (TRAIN_DIR, TEST_DIR):
+        for load in (load_news, load_behaviors):
+            raw = load(folder)
+            os.environ["OWNFEED_DATA"] = "warehouse"
+            from_warehouse = load(folder)
+            os.environ["OWNFEED_DATA"] = "raw"
+            try:
+                pd.testing.assert_frame_equal(raw, from_warehouse)
+            except AssertionError:
+                loaders_ok = False
+    check("src/data.py loaders identical (warehouse vs raw)", loaders_ok)
 
     print(f"\n{sum(results)}/{len(results)} checks passed")
     sys.exit(0 if all(results) else 1)

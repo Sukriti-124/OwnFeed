@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
+import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 LANDING = ROOT / "data"  # raw files exactly as downloaded
@@ -70,7 +71,7 @@ def write_partition(con: duckdb.DuckDBPyConnection, query: str, target_dir: Path
     shutil.rmtree(tmp_dir, ignore_errors=True)
     tmp_dir.mkdir(parents=True)
     con.execute(f"COPY ({query}) TO '{tmp_dir / 'part-0.parquet'}' (FORMAT PARQUET, COMPRESSION ZSTD)")
-    rows = con.execute(f"SELECT count(*) FROM '{tmp_dir / 'part-0.parquet'}'").fetchone()[0]
+    rows = con.execute(f"SELECT count(*) FROM '{tmp_dir / 'part-0.parquet'}'").fetchall()[0][0]
     shutil.rmtree(target_dir, ignore_errors=True)
     tmp_dir.rename(target_dir)
     return rows
@@ -84,10 +85,16 @@ def ingest_news(con: duckdb.DuckDBPyConnection, source: str) -> None:
         con.execute(f"CREATE OR REPLACE TEMP VIEW raw_news AS SELECT * FROM {read_tsv(path, NEWS_COLUMNS)}")
         total, missing_ids, duplicate_ids = con.execute(
             "SELECT count(*), count(*) FILTER (WHERE news_id IS NULL), count(*) - count(DISTINCT news_id) FROM raw_news"
-        ).fetchone()
+        ).fetchall()[0]
         if total == 0 or missing_ids or duplicate_ids:
             raise LoadError(f"rows={total}, missing ids={missing_ids}, duplicate ids={duplicate_ids}")
-        query = (f"SELECT *, '{path.relative_to(ROOT)}' AS _source_file, current_timestamp AS _ingested_at FROM raw_news")
+        # Keep each article's line number: saved embeddings follow the raw file's order
+        with open(path, encoding="utf-8") as f:
+            order = pd.DataFrame({"news_id": [line.split("\t", 1)[0] for line in f]})
+        order["_file_row"] = range(1, len(order) + 1)
+        con.register("news_order", order)
+        query = (f"SELECT r.*, o._file_row, '{path.relative_to(ROOT)}' AS _source_file, current_timestamp AS _ingested_at "
+                 f"FROM raw_news AS r JOIN news_order AS o USING (news_id)")
         rows = write_partition(con, query, BRONZE / "news" / f"source={source}")
         log_load("news", f"source={source}", rows, path, checksum, time.time() - start, "success")
         print(f"✓ news  source={source:5s}  {rows:>7,} rows")
@@ -122,7 +129,7 @@ def ingest_behaviors_day(con: duckdb.DuckDBPyConnection, source: str, day: str, 
                    count(*) FILTER (WHERE impression_id IS NULL OR user_id IS NULL),
                    count(*) FILTER (WHERE NOT regexp_full_match(impressions, '{IMPRESSIONS_PATTERN}'))
             FROM {view} WHERE date = DATE '{day}'
-        """).fetchone()
+        """).fetchall()[0]
         if total == 0 or bad_time or missing_keys or bad_impressions:
             raise LoadError(f"rows={total}, unparsable times={bad_time}, missing keys={missing_keys}, malformed impressions={bad_impressions}")
         query = (f"SELECT impression_id, user_id, time, history, impressions, '{path.relative_to(ROOT)}' AS _source_file, "
@@ -149,7 +156,7 @@ def ingest(days: list[str] | None = None) -> None:
     for source in SOURCES:
         path = behaviors_view(con, source)
         checksum = md5(path)
-        unparsable = con.execute(f"SELECT count(*) FROM raw_behaviors_{source} WHERE date IS NULL").fetchone()[0]
+        unparsable = con.execute(f"SELECT count(*) FROM raw_behaviors_{source} WHERE date IS NULL").fetchall()[0][0]
         if unparsable:
             log_load("behaviors", f"source={source}", 0, path, checksum, 0, "failed", f"{unparsable} rows with unparsable time")
             raise LoadError(f"{source}: {unparsable} rows with an unparsable time")

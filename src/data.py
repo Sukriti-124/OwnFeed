@@ -1,4 +1,10 @@
-"""Load MIND-small, assign articles to slider buckets, and split impressions by time."""
+"""Load MIND-small, assign articles to slider buckets, and split impressions by time.
+
+Reads from the warehouse (warehouse/ownfeed.duckdb, built by pipeline/ingest.py + dbt) when it exists, otherwise
+from the raw TSV files. Both give identical tables (pipeline/check_parity.py). Set OWNFEED_DATA=raw to force the
+raw files.
+"""
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -6,6 +12,8 @@ import pandas as pd
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 TRAIN_DIR = DATA_DIR / "MINDsmall_train"
 TEST_DIR = DATA_DIR / "MINDsmall_test"  # locked test set:
+WAREHOUSE_PATH = DATA_DIR.parent / "warehouse" / "ownfeed.duckdb"
+SOURCE_OF = {TRAIN_DIR: "train", TEST_DIR: "test"}
 
 # Last day of the train folder is held out for validation
 VALIDATION_DAY = "2019-11-14"
@@ -32,8 +40,28 @@ def assign_bucket(news: pd.DataFrame) -> pd.Series:
     return news["subcategory"].map(SUBCATEGORY_OVERRIDES).fillna(news["category"].map(CATEGORY_TO_BUCKET))
 
 
+def use_warehouse() -> bool:
+    """True if the warehouse has been built and OWNFEED_DATA isn't set to 'raw'."""
+    return WAREHOUSE_PATH.exists() and os.environ.get("OWNFEED_DATA", "warehouse") != "raw"
+
+
+def _query(sql: str, params: list) -> pd.DataFrame:
+    import duckdb  # only needed with the warehouse
+
+    with duckdb.connect(str(WAREHOUSE_PATH), read_only=True) as con:
+        return con.execute(sql, params).df()
+
+
 def load_news(folder: Path = TRAIN_DIR) -> pd.DataFrame:
-    """One row per article, with its bucket."""
+    """One row per article, with its bucket (in the raw file's order, which saved embeddings follow)."""
+    if use_warehouse():
+        news = _query("""
+            SELECT a.news_id, a.category, a.subcategory, a.title, a.abstract, a.bucket
+            FROM marts.dim_article_sources AS s JOIN marts.dim_articles AS a USING (news_id)
+            WHERE s.source = ? ORDER BY s.file_row
+        """, [SOURCE_OF[folder]])
+        news["bucket"] = news["bucket"].astype("str")  # same dtype as the raw path (missing stays NaN)
+        return news
     news = pd.read_csv(
         folder / "news.tsv", sep="\t", header=None, quoting=3,
         names=["news_id", "category", "subcategory", "title", "abstract", "url", "title_entities", "abstract_entities"],
@@ -46,6 +74,11 @@ def load_news(folder: Path = TRAIN_DIR) -> pd.DataFrame:
 
 def load_behaviors(folder: Path = TRAIN_DIR) -> pd.DataFrame:
     """One row per impression (one page view): user, time, past clicks, and the articles shown."""
+    if use_warehouse():
+        return _query("""
+            SELECT impression_id, user_id, time, history, impressions
+            FROM marts.fct_page_views WHERE source = ? ORDER BY impression_id
+        """, [SOURCE_OF[folder]])
     behaviors = pd.read_csv(
         folder / "behaviors.tsv", sep="\t", header=None,
         names=["impression_id", "user_id", "time", "history", "impressions"],

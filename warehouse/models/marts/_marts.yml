@@ -42,3 +42,17 @@ models:
     columns:
       - name: user_id
         data_tests: [not_null]
+  - name: dim_article_sources
+    description: Which articles each source folder lists, with their line in the raw file.
+    columns:
+      - name: news_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_articles')
+                field: news_id
+  - name: fct_page_views
+    description: One row per page view in the raw form (history and impressions as text) used by the ML code.
+    columns:
+      - name: impression_key
+        data_tests: [unique, not_null]

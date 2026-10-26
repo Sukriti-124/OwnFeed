@@ -1,10 +1,13 @@
 version: 2
 models:
   - name: stg_news
-    description: Cleaned article catalog (train + test folders, deduplicated; empty abstracts become '').
+    description: Cleaned articles, one row per (source folder, article); empty abstracts become ''.
     columns:
       - name: news_id
-        data_tests: [unique, not_null]
+        data_tests: [not_null]
+      - name: file_row
+        description: Line number in the raw news.tsv (saved embeddings follow this order)
+        data_tests: [not_null]
       - name: title
         data_tests: [not_null]
   - name: stg_behaviors
