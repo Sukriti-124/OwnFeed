@@ -1,0 +1,13 @@
+version: 2
+sources:
+  - name: bronze
+    description: Phase 1 output (pipeline/ingest.py). A faithful, typed copy of the raw MIND files.
+    tables:
+      - name: news
+        config:
+          meta:
+            external_location: "read_parquet('{{ var('bronze') }}/news/*/*.parquet', hive_partitioning = true)"
+      - name: behaviors
+        config:
+          meta:
+            external_location: "read_parquet('{{ var('bronze') }}/behaviors/*/*.parquet', hive_partitioning = true)"

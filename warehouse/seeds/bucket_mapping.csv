@@ -1,0 +1,20 @@
+category,subcategory,bucket,reason
+news,,News,current affairs
+weather,,News,daily what's-happening information
+finance,,Learn,money knowledge; kept whole so Learn isn't too thin
+health,,Learn,useful knowledge
+lifestyle,,Lifestyle,everyday life
+foodanddrink,,Lifestyle,everyday life
+travel,,Lifestyle,everyday life
+autos,,Lifestyle,hobby and purchases
+entertainment,,Entertain,fun and celebrities
+movies,,Entertain,fun and celebrities
+music,,Entertain,fun and celebrities
+tv,,Entertain,fun and celebrities
+video,,Entertain,clips (animals; viral)
+sports,,Sports,games and teams
+news,newsscienceandtechnology,Learn,override: learning; not current events
+lifestyle,lifestyleroyals,Entertain,override: celebrity gossip
+lifestyle,lifestylebuzz,Entertain,override: celebrity gossip
+lifestyle,lifestylecelebstyle,Entertain,override: celebrity gossip
+lifestyle,awardstyle,Entertain,override: celebrity gossip

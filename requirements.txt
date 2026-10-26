@@ -4,3 +4,7 @@ ipykernel
 torch
 sentence-transformers
 streamlit
+
+# Data engineering layer (pipeline/ and warehouse/)
+duckdb
+dbt-duckdb

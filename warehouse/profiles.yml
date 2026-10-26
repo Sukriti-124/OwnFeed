@@ -1,0 +1,7 @@
+ownfeed:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      path: ownfeed.duckdb   # warehouse/ownfeed.duckdb (gitignored: contains MIND data)
+      threads: 4

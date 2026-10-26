@@ -1,0 +1,19 @@
+version: 2
+models:
+  - name: stg_news
+    description: Cleaned article catalog (train + test folders, deduplicated; empty abstracts become '').
+    columns:
+      - name: news_id
+        data_tests: [unique, not_null]
+      - name: title
+        data_tests: [not_null]
+  - name: stg_behaviors
+    description: Cleaned page views with a composite key, parsed date and hour.
+    columns:
+      - name: impression_key
+        description: source + impression_id (impression_id alone repeats across source folders)
+        data_tests: [unique, not_null]
+      - name: user_id
+        data_tests: [not_null]
+      - name: time
+        data_tests: [not_null]

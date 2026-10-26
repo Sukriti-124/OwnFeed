@@ -1,0 +1,14 @@
+version: 2
+seeds:
+  - name: bucket_mapping
+    description: >
+      The 5 slider buckets. A row with an empty subcategory maps a whole category; a row with a subcategory
+      overrides its category's bucket. Categories not listed (kids, middleeast, northamerica) are dropped.
+    config:
+      column_types: {category: varchar, subcategory: varchar, bucket: varchar, reason: varchar}
+    columns:
+      - name: bucket
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["News", "Learn", "Lifestyle", "Entertain", "Sports"]

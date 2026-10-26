@@ -1,0 +1,44 @@
+version: 2
+models:
+  - name: dim_articles
+    description: Article catalog with the slider bucket (see seeds/bucket_mapping.csv).
+    columns:
+      - name: news_id
+        data_tests: [unique, not_null]
+      - name: bucket
+        description: News / Learn / Lifestyle / Entertain / Sports, or null for dropped categories.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["News", "Learn", "Lifestyle", "Entertain", "Sports"]
+  - name: fct_impressions
+    description: One row per article shown on a page view, with clicked 1/0, bucket and split.
+    columns:
+      - name: news_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_articles')
+                field: news_id
+      - name: clicked
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+                quote: false
+      - name: split
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["train", "validation", "test"]
+  - name: fct_hourly_trending
+    description: Clicks per article in the 24 hours before each hour (current hour excluded).
+    columns:
+      - name: clicks_last_24h
+        data_tests: [not_null]
+  - name: dim_user_history
+    description: Each user's past clicks per source folder; recent_clicks = the last 50 (user tower input).
+    columns:
+      - name: user_id
+        data_tests: [not_null]

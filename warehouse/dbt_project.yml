@@ -1,0 +1,33 @@
+name: ownfeed
+version: "1.0.0"
+config-version: 2
+profile: ownfeed
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  bronze: "../lake/bronze"          # Phase 1 output, relative to this folder
+  validation_day: "2019-11-14"      # same as src/data.py VALIDATION_DAY
+  test_day: "2019-11-15"            # first day of the locked test set (MINDsmall_dev)
+  history_len: 50                   # same as src/two_tower.py HISTORY_LEN
+
+models:
+  ownfeed:
+    staging:
+      +materialized: table   # tables, not views: views would point at ../lake files by relative path
+      +schema: staging
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+    marts:
+      +materialized: table
+      +schema: marts
+
+seeds:
+  ownfeed:
+    +schema: seeds
