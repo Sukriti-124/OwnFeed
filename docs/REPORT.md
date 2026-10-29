@@ -20,6 +20,7 @@ All "validation" numbers are from **Nov 14** (`MINDsmall_train`, last day). All 
    - [2.8 Demo](#28-demo)
    - [2.9 Hosting and the data license](#29-hosting-and-the-data-license)
    - [2.10 Deliberately deferred](#210-deliberately-deferred)
+   - [2.11 Data platform and MLOps](#211-data-platform-and-mlops)
 3. [Code reference](#3-code-reference)
 4. [Notebooks](#4-notebooks)
 5. [Metrics glossary](#5-metrics-glossary)
@@ -276,12 +277,63 @@ Each entry gives the **decision**, the **alternatives** considered, **why** we c
 
 | Item | Status / reason |
 |---|---|
-| **Data engineering layer** | Planned for later: ingestion → Parquet → DuckDB + dbt (marts, tests, the topic mapping as a seed) → Dagster → Docker; optional Kafka/Redpanda click stream for live trending |
-| Docker / Kubernetes | Docker with the DE layer; Kubernetes optional (useful for MLOps roles) |
+| ~~Data engineering layer~~ | **Built** (§2.11): ingestion → Parquet → DuckDB + dbt → Airflow in Docker |
+| Streaming (Kafka/Redpanda) | Future work: live "trending in the last hour" from click events; incremental dbt models |
+| Kubernetes | Optional; Airflow already runs in Docker |
+| Feed concierge (agentic) | Future work: an LLM agent turns plain-language requests into slider settings via tools, and checks in when a requested topic keeps being skipped. Only the request and topic names would go to the LLM, never MIND text |
 | Bounded balancer (½–2× slider) | Future work: would change results after the test run |
 | "Breaking news" exception | Future work: let major stories through a low News slider |
 | A/B test | A written plan only; simulated A/B results would be circular |
 | Fine-tuned encoder, entity vectors, MIND-large | Future model upgrades |
+
+### 2.11 Data platform and MLOps
+
+**Why add it at all.** For the ML results alone it adds nothing: the numbers are identical. Its value is in how the data is handled. Before it, the project had real problems a data layer prevents:
+- the bucket mapping existed in two places (notebook 01 kept its own copy);
+- every notebook re-read and re-unpacked the raw TSVs;
+- "trending" was computed in four places;
+- click-data preparation was copy-pasted into notebook 07, notebook 08 and `feed.py`;
+- leakage was checked once, by hand.
+
+It also shows the full "raw logs → tested pipeline → model → product" story that data-engineering and ML-platform roles look for.
+
+**Phase 1: ingestion (`pipeline/ingest.py`).** DuckDB reads the raw TSVs and writes ZSTD Parquet to `lake/bronze/`, news by source folder and behaviors **one folder per day** (Nov 9–15).
+- *Bronze stays faithful:* the impressions list stays one text column, because unpacking it is a transformation for dbt. If a cleaning rule is wrong, rebuild from bronze without touching the raw files.
+- *Idempotent:* each partition is written to a `.tmp` folder and swapped in, so reloading a day replaces it.
+- *Checked at load time:* rows > 0, parsable times, keys present, every impressions entry matches `^N\d+-[01]( N\d+-[01])*$`. A failure writes nothing and is logged.
+- *Traceable:* every row has `_source_file` and `_ingested_at`; `lake/_load_log.csv` records rows, file MD5, duration and status.
+- *Verified:* content identical to the pandas loaders; reloads add no duplicates; a planted malformed line is rejected; 200 MB of TSV → 50 MB of Parquet in ~2 s.
+- *Finding:* **`impression_id` restarts at 1 in each source folder** (train 1–156,965, test 1–73,152). The warehouse key is therefore `source + impression_id`, enforced by a uniqueness test.
+
+**Phase 2: warehouse (DuckDB + dbt, `warehouse/`).**
+- *Seed:* `bucket_mapping.csv`, 19 rows with a `reason` column; overrides join on subcategory only, exactly like `src/data.py`.
+- *Staging:* `stg_news` (one row per source and article, keeping `file_row` because saved embeddings follow the raw file's order) and `stg_behaviors`. These are stored as **tables, not views**: views pointed at `../lake` by a relative path and broke when queried from anywhere but `warehouse/`.
+- *Intermediate:* `int_impressions` unpacks each impression list.
+- *Marts:* `dim_articles`, `dim_article_sources`, `fct_impressions` (8,584,442 rows with bucket and split), `fct_page_views`, `fct_hourly_trending` (dense hourly grid per article; window = 24 preceding to 1 preceding hour) and `dim_user_history` (last 50 clicks per source and user).
+- *27 data tests:* 20 schema tests (unique, not null, accepted values, relationships) and 7 singular ones: no split leakage, history fixed per user, one history per user, one row per source and article, daily CTR 2–6%, every bucket shown every day, and trending excludes the current hour (recomputed independently on 2,000 sampled rows).
+- *Paths:* the profile and sources read `OWNFEED_WAREHOUSE` / `OWNFEED_LAKE` with relative defaults. Airflow runs dbt from a temporary copy of the project, so relative paths alone would break. dbt doesn't evaluate `env_var` inside `vars:`, so it's called where the path is used.
+
+**Parity check (`pipeline/check_parity.py`).** Proves the warehouse gives exactly what the original Python code computes from the raw files: page views and rows per split, clicks per bucket, every article's bucket, trending at 5 sample hours, last-50 histories, and the `src/data.py` loaders (values, order and dtypes). It forces `OWNFEED_DATA=raw` for its Python side so it never compares the warehouse with itself. **7/7 pass.**
+- *Why keep it after the switch:* it guards future warehouse edits, and it keeps the warehouse and raw-file paths identical. Without the raw-file path, "run locally" wouldn't work for people who skip the data layer. If the raw path were ever removed, the plan is to replace it with cheaper "golden number" tests inside dbt.
+
+**Switching the ML code to the warehouse.** `src/data.py` reads `marts.dim_article_sources` + `dim_articles` (ordered by `file_row`) and `marts.fct_page_views` (ordered by `impression_id`) when `warehouse/ownfeed.duckdb` exists, and falls back to the raw files otherwise. Function names and outputs are unchanged, so no notebook or app code changed. Notebooks 02/03/04/06 were re-run through the warehouse and rewrote their result files identically.
+- *Lesson:* a first verification "passed" only because the test scripts had been deleted and the notebooks never ran. The final check confirms output files were actually rewritten (timestamp) before comparing.
+
+**Phase 3: orchestration (Airflow in Docker).**
+- *Airflow over Dagster:* Airflow is far more common in job postings, its daily runs and catch-up fit replaying MIND's seven days, and running it in Docker avoids Python 3.14 compatibility issues.
+- *Setup:* `docker-compose.yml` + `airflow/Dockerfile` (Airflow 3.3.2, Python 3.12; dbt in its own virtualenv as Cosmos recommends; the same torch / pandas / DuckDB versions as the project). The repo is mounted, so data is never baked into the image.
+- *`ownfeed_daily`:* runs @daily from 2019-11-09 to 2019-11-15 with catch-up: ingest the day → Cosmos `DbtTaskGroup` (each model's run and test as separate tasks) → parity → embed new articles → score the champion → refresh the demo. `max_active_tasks=1` because DuckDB has a single writer. All 7 days succeeded.
+- *`ownfeed_retrain`:* manual, with `train_until` / `eval_day` parameters: embed → train challenger → evaluate and promote.
+- *MLOps rules (`pipeline/ml.py`):*
+  - The model registry (`artifacts/models/registry.json`) pins `v1-paper`, the model behind every reported number, and never overwrites it.
+  - A challenger is promoted only if Recall@500 improves by at least 0.002 and NDCG@10 doesn't drop by more than 0.002.
+  - **The test day may be monitored but never used to train or choose a model**; the code raises an error.
+  - `evaluate_day` rebuilt only from warehouse marts reproduces 0.811 / 0.074 (validation) and 0.859 / 0.150 (test) exactly.
+  - In Airflow, a challenger trained on CPU scored 0.8105 / 0.0783 vs the champion's 0.8106 / 0.0743, and was **not promoted**.
+- *Memory (Docker VM 7.75 GB):* two steps were killed for running out of memory, because both unpacked all 8.6 M shown rows to reach ~160 K clicks. Both were rewritten in `src/` (with the user's agreement) and proven identical:
+  - `finder.hourly_clicks` extracts clicked IDs only: an identical table, 11.9 s → 0.4 s.
+  - `two_tower.training_examples` walks impressions one by one: all 189,519 examples identical to the committed version (same random negatives), peak ~6 GB → 0.9 GB, 4× faster.
+- *Reproducibility:* scores computed in Docker (CPU) match the Mac (Apple GPU) exactly.
 
 ---
 
@@ -299,8 +351,9 @@ All code lives in `src/` (a package). Notebooks import it with `sys.path.insert(
 | `CATEGORY_TO_BUCKET` | Category → bucket map (§2.1) |
 | `SUBCATEGORY_OVERRIDES` | 5 subcategories that move bucket (science & tech → Learn; 4 celebrity subcategories → Entertain) |
 | `assign_bucket(news)` | Bucket per article: the subcategory override wins, otherwise the category's bucket; NaN for dropped categories |
-| `load_news(folder)` | Reads `news.tsv` (id, category, subcategory, title, abstract), fills empty abstracts, adds `bucket` |
-| `load_behaviors(folder)` | Reads `behaviors.tsv` (impression id, user, time, history, impressions), parses time, fills empty histories with `""` |
+| `WAREHOUSE_PATH`, `use_warehouse()` | `warehouse/ownfeed.duckdb`; the warehouse is used when it exists unless `OWNFEED_DATA=raw` |
+| `load_news(folder)` | Articles of one source folder (id, category, subcategory, title, abstract, bucket) in the raw file's order: from the warehouse marts, or from `news.tsv` (empty abstracts filled, `bucket` assigned) |
+| `load_behaviors(folder)` | Page views (impression id, user, time, history, impressions): from `marts.fct_page_views`, or from `behaviors.tsv` (time parsed, empty histories as `""`). Both paths are identical (parity check) |
 | `explode_impressions(behaviors, news=None)` | One row per *(page view, article shown)* with `clicked` 1/0; optionally adds category/subcategory/bucket |
 | `split_by_time(behaviors, validation_day)` | Returns `(train, validation)` split at the validation day |
 
@@ -311,7 +364,7 @@ All code lives in `src/` (a package). Notebooks import it with `sys.path.insert(
 | `ARTIFACTS_DIR` | `artifacts/` (gitignored) for models and embeddings |
 | `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` |
 | `EMBEDDINGS_PATH` | `artifacts/news_embeddings.npz` (train-folder articles) |
-| `hourly_clicks(behaviors)` | Clicks per article per hour: rows = hour, columns = news_id |
+| `hourly_clicks(behaviors)` | Clicks per article per hour: rows = hour, columns = news_id. Extracts only clicked IDs (`N123-1`) instead of unpacking every article shown, so it's ~30× faster with the same table |
 | `trending_scores(hourly, hour, window_hours=24)` | Clicks per article in the 24 h before `hour`, **excluding the current hour** (no peeking) |
 | `rank(scores, pool)` | Pool articles sorted by score (articles without clicks last, stable order) |
 | `with_bucket_quotas(ranked, bucket_of, per_bucket=100)` | Keeps the top 100 of each bucket from a ranked list, preserving overall order |
@@ -330,7 +383,7 @@ All code lives in `src/` (a package). Notebooks import it with `sys.path.insert(
 | `TwoTower.users(history_vectors, mask)` | Masked mean of history vectors → user tower → unit vector |
 | `TwoTower.items(vectors)` | Article vector → item tower → unit vector |
 | `history_matrix(behaviors, index_of)` | `(row_of, matrix)`: one row per user with their last 50 clicked article indices, padded with −1 |
-| `training_examples(behaviors, index_of, row_of, n_negatives=4, seed=0)` | One example per click: `(user row, clicked article, 4 skipped articles from the same page, hour)`; falls back to random negatives if a page had no skips |
+| `training_examples(behaviors, index_of, row_of, n_negatives=4, seed=0)` | One example per click: `(user row, clicked article, 4 skipped articles from the same page, hour)`; falls back to random negatives if a page had no skips. Walks page views one at a time (peak memory ~6 GB → 0.9 GB), with output identical to the earlier table-based version |
 | `popularity_table(hourly, hours, index_of, window_hours=24)` | `log(1 + clicks in the previous 24 h)` for every article at each requested hour; returns `(hour → row, table)` |
 | `user_vectors(model, history, article_vectors)` | User-tower output for every history row, in batches |
 | `train(model, article_vectors, history, examples, …)` | Training loop: in-batch + same-page negatives, cross-entropy at temperature 0.05. Optional `popularity` / `example_hours` / `beta` add trending inside training (the rejected option B). Optional `on_epoch_end` callback |
@@ -407,6 +460,61 @@ All code lives in `src/` (a package). Notebooks import it with `sys.path.insert(
 
 Streamlit page (see §2.8). Shows a friendly error if the MIND data or built artifacts are missing. Caches the `FeedEngine` with `st.cache_resource` and the step-4 simulation with `st.cache_data`. Theme in `.streamlit/config.toml`.
 
+### `pipeline/ingest.py`: raw files → bronze Parquet
+
+| Name | What it does |
+|---|---|
+| `LANDING`, `LAKE`, `BRONZE`, `LOAD_LOG` | `data/` (raw), `lake/`, `lake/bronze/`, `lake/_load_log.csv` |
+| `read_tsv(path, columns)` | DuckDB expression that reads a headerless MIND TSV with explicit types and no quoting |
+| `write_partition(con, query, target_dir)` | Writes a query to Parquet in a `.tmp` folder, then swaps it in (idempotent) |
+| `ingest_news(con, source)` | One news snapshot per source folder, with `_file_row` (line number) and metadata; checks for missing or duplicate IDs |
+| `behaviors_view(con, source)` | Typed view over a behaviors file with parsed time and `date` |
+| `ingest_behaviors_day(con, source, day, …)` | One day → `bronze/behaviors/date=YYYY-MM-DD/`, after checks (rows, times, keys, impressions format) |
+| `ingest(days=None)` / `main()` | All days and both news snapshots, or the given days: `python -m pipeline.ingest --all \| --day YYYY-MM-DD` |
+| `log_load(...)`, `md5(path)` | Load log rows: rows, source checksum, duration, status, message |
+
+### `warehouse/`: dbt project (DuckDB)
+
+| Node | What it is |
+|---|---|
+| `seeds/bucket_mapping.csv` | The topic mapping with a reason per row |
+| `stg_news`, `stg_behaviors` | Cleaned staging tables (composite key `source-impression_id`, `file_row`, date, hour) |
+| `int_impressions` | View: one row per (page view, article shown, clicked) |
+| `dim_articles`, `dim_article_sources` | Each article once with its bucket; which articles each folder lists, in file order |
+| `fct_impressions`, `fct_page_views` | Articles shown with clicked/bucket/split; page views in raw form for `src/data.py` |
+| `fct_hourly_trending` | Clicks in the 24 h before each hour (current hour excluded) and `ln(1 + x)` |
+| `dim_user_history` | Per source and user: history length and the last 50 clicks |
+| `tests/*.sql` | 7 singular tests (leakage, history, uniqueness, CTR range, bucket coverage, trending window) |
+| `macros/generate_schema_name.sql` | Uses folder schemas (`staging`, `marts`) as-is |
+
+Run: `cd warehouse && dbt build --profiles-dir .` (1 seed + 9 models + 27 tests, ~2 s).
+
+### `pipeline/check_parity.py`
+
+`python -m pipeline.check_parity`: 7 checks that the warehouse matches the raw-file Python code exactly (§2.11). It exits non-zero on any mismatch, which makes the Airflow task fail.
+
+### `pipeline/ml.py`: MLOps tasks
+
+| Name | What it does |
+|---|---|
+| `load_registry()` / `save_registry()` | `artifacts/models/registry.json`: champion, versions (path, training days, metrics), promotion decisions. Starts with `v1-paper` pinned |
+| `load_model(version=None)` | Loads a registered model (default: the champion) |
+| `embed_new_articles()` | MiniLM vectors for warehouse articles that have none yet (appends to `news_embeddings_all.npz`) |
+| `score_day(model, day, dev)` | Recall@K / NDCG@10 on one day for the model (taste + 0.05 × trending, quotas) and for trending alone, from warehouse marts only |
+| `evaluate_day(day, version=None)` | Scores and upserts a row in `results/model_monitoring.csv` (day, version, split, model vs trending) |
+| `train_challenger(train_until, epochs=3, seed=0)` | Trains a new version on train-folder days before `train_until` and registers it; refuses the test day |
+| `compare_and_promote(challenger, eval_day)` | Scores challenger and champion on `eval_day` (never the test day); promotes only on a +0.002 Recall@500 win without losing more than 0.002 NDCG@10; logs the decision |
+| `main()` | `python -m pipeline.ml embed \| evaluate DAY \| retrain` |
+
+### `airflow/` and `docker-compose.yml`
+
+| File | What it is |
+|---|---|
+| `airflow/Dockerfile` | Airflow 3.3.2 (Python 3.12) + dbt in `/home/airflow/dbt_venv` + CPU PyTorch, pandas, DuckDB, sentence-transformers, Cosmos (versions pinned to the project's) |
+| `docker-compose.yml` | `airflow standalone` on :8080, no login (local demo), repo mounted at `/opt/ownfeed`, absolute warehouse/lake paths, MiniLM cache in `artifacts/` |
+| `airflow/dags/ownfeed_daily.py` | Daily DAG with catch-up (Nov 9–15): `ingest_day` → `dbt_warehouse` (Cosmos task group, tests after each model) → `parity_check` → `embed_new_articles` → `evaluate_day` → `refresh_demo_assets` |
+| `airflow/dags/ownfeed_retrain.py` | Manual DAG with `train_until` / `eval_day` params: `embed_new_articles` → `train_challenger` → `evaluate_and_promote` |
+
 ---
 
 ## 4. Notebooks
@@ -455,6 +563,9 @@ Streamlit page (see §2.8). Shows a friendly error if the MIND data or built art
 | Click rate: normal → OwnFeed | 3.78% → 3.03% | 3.68% → 2.89% |
 | Simulator AUC (held-out users) | 0.672 | 0.702 |
 | Top-10 articles' share of clicks | 21.0% | 31.6% |
+| Warehouse: page views / articles shown / articles (all days) | 230,117 / 8,584,442 / 65,238 | |
+| dbt build (1 seed + 9 models + 27 tests) / parity checks | ~2 s, all pass / 7 of 7 | |
+| Daily monitoring Nov 9–15, OwnFeed vs trending Recall@500 | 0.81–0.89 vs 0.78–0.86 (OwnFeed higher every day) | |
 | Page build time (one reader, CPU) | ~1 ms | ~1 ms |
 
 ---

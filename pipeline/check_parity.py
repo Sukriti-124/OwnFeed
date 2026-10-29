@@ -14,7 +14,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from src.data import TEST_DIR, TRAIN_DIR, assign_bucket, explode_impressions, load_behaviors, load_news, split_by_time
+from src.data import TEST_DIR, TRAIN_DIR, assign_bucket, load_behaviors, load_news, split_by_time
 from src.finder import hourly_clicks, trending_scores
 from src.two_tower import HISTORY_LEN
 
@@ -40,17 +40,18 @@ def main() -> None:
     expected = {"train": len(train_part), "validation": len(val_part), "test": len(test_b)}
     check("page views per split", views == expected, f"{views}")
     rows = dict(con.execute("SELECT split, count(*) FROM marts.fct_impressions GROUP BY 1").fetchall())
-    expected_rows = {s: len(explode_impressions(b)) for s, b in [("train", train_part), ("validation", val_part), ("test", test_b)]}
+    # Count articles shown from the text (one more than the spaces) instead of unpacking ~8.6M rows in memory
+    expected_rows = {s: int(b.impressions.str.count(" ").sum()) + len(b)
+                     for s, b in [("train", train_part), ("validation", val_part), ("test", test_b)]}
     check("articles shown per split", rows == expected_rows, f"{rows}")
 
-    # 2. Clicks per bucket per split
+    # 2. Clicks per bucket per split (only the clicked IDs are pulled out of each impression list)
     news = pd.concat([load_news(TRAIN_DIR), load_news(TEST_DIR)]).drop_duplicates("news_id")
     bucket_of = news.set_index("news_id")["bucket"]
     py = []
     for split, b in [("train", train_part), ("validation", val_part), ("test", test_b)]:
-        s = explode_impressions(b)
-        s = s[s.clicked == 1]
-        py.append(s.news_id.map(bucket_of).fillna("(none)").value_counts().rename(split))
+        clicked = b.impressions.str.findall(r"(N\d+)-1").explode().dropna()
+        py.append(clicked.map(bucket_of).fillna("(none)").value_counts().rename(split))
     py = pd.concat(py, axis=1).fillna(0).astype(int).sort_index()
     wh = con.execute("SELECT coalesce(bucket, '(none)') AS bucket, split, sum(clicked) AS clicks FROM marts.fct_impressions GROUP BY ALL").df()
     wh = wh.pivot(index="bucket", columns="split", values="clicks").fillna(0).astype(int)[py.columns].sort_index()

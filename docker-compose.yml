@@ -1,0 +1,25 @@
+# Airflow for OwnFeed:  docker compose up  ->  http://localhost:8080
+# The whole repo is mounted at /opt/ownfeed, so data/, lake/, warehouse/ and artifacts/ stay on your machine
+# and are never baked into the image (the MIND license doesn't allow redistributing the data).
+services:
+  airflow:
+    build: ./airflow
+    image: ownfeed-airflow:3.3.2
+    command: standalone
+    ports:
+      - "8080:8080"
+    environment:
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/ownfeed/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"   # local demo: no login
+      AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: "1"             # DuckDB has a single writer
+      PYTHONPATH: /opt/ownfeed
+      OWNFEED_DBT_EXECUTABLE: /home/airflow/dbt_venv/bin/dbt
+      OWNFEED_WAREHOUSE: /opt/ownfeed/warehouse/ownfeed.duckdb
+      OWNFEED_LAKE: /opt/ownfeed/lake/bronze
+      HF_HOME: /opt/ownfeed/artifacts/hf_cache                # MiniLM download cache (gitignored)
+    volumes:
+      - ./:/opt/ownfeed
+      - airflow_home:/opt/airflow
+volumes:
+  airflow_home:

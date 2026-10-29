@@ -3,5 +3,5 @@ ownfeed:
   outputs:
     local:
       type: duckdb
-      path: ownfeed.duckdb   # warehouse/ownfeed.duckdb (gitignored: contains MIND data)
+      path: "{{ env_var('OWNFEED_WAREHOUSE', 'ownfeed.duckdb') }}"   # warehouse/ownfeed.duckdb (gitignored: contains MIND data)
       threads: 4
